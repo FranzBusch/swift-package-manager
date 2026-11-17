@@ -7,6 +7,12 @@
 
 Diagnose API-breaking changes to Swift modules in a package.
 
+> Note: This command has moved to <doc:PackageAPIDiagnoseBreakingChanges>. The spelling documented
+> on this page continues to work for compatibility with existing continuous integration
+> configurations, but new uses should prefer `swift package api diagnose-breaking-changes`. Note
+> that when using the new spelling, global options such as `--package-path` must be passed before
+> the `api` subcommand.
+
 ```
 package diagnose-api-breaking-changes
   [--package-path=<package-path>] [--cache-path=<cache-path>]

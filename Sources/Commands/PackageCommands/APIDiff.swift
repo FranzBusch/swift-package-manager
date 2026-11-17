@@ -38,25 +38,11 @@ struct DeprecatedAPIDiff: ParsableCommand {
     }
 }
 
-struct APIDiff: AsyncSwiftCommand {
-    static let configuration = CommandConfiguration(
-        commandName: "diagnose-api-breaking-changes",
-        abstract: "Diagnose API-breaking changes to Swift modules in a package.",
-        discussion: """
-        You can use the `diagnose-api-breaking-changes` command to compare the Swift API of \
-        a package to a baseline revision, diagnosing any breaking changes that were \
-        introduced. By default, it compares every Swift module from the baseline \
-        revision that is part of a library product. For packages with many targets, this \
-        behavior may be undesirable as the comparison can be slow. \
-        The `--products` and `--targets` options may be used to restrict the scope of \
-        the comparison.
-        """,
-        helpNames: [.short, .long, .customLong("help", withSingleDash: true)]
-    )
-
-    @OptionGroup(visibility: .hidden)
-    var globalOptions: GlobalOptions
-
+/// The options accepted by the API breaking-changes diagnosis command.
+///
+/// Factored out so that the current spelling (`swift package api diagnose-breaking-changes`) and
+/// the deprecated one (`swift package diagnose-api-breaking-changes`) cannot drift apart.
+struct APIBreakingChangesOptions: ParsableArguments {
     @Option(help: """
     The path to a text file containing breaking changes that the API comparison should ignore. \
     Each ignored breaking change in the file should appear on its own line and contain the exact message \
@@ -81,6 +67,76 @@ struct APIDiff: AsyncSwiftCommand {
 
     @Flag(help: "Regenerate the API baseline, even if an existing one is available.")
     var regenerateBaseline: Bool = false
+}
+
+extension SwiftPackageCommand.API {
+    struct DiagnoseBreakingChanges: AsyncSwiftCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "diagnose-breaking-changes",
+            abstract: "Diagnose API-breaking changes to Swift modules in a package.",
+            discussion: """
+            You can use the `diagnose-breaking-changes` command to compare the Swift API of \
+            a package to a baseline revision, diagnosing any breaking changes that were \
+            introduced. By default, it compares every Swift module from the baseline \
+            revision that is part of a library product. For packages with many targets, this \
+            behavior may be undesirable as the comparison can be slow. \
+            The `--products` and `--targets` options may be used to restrict the scope of \
+            the comparison.
+            """,
+            helpNames: [.short, .long, .customLong("help", withSingleDash: true)]
+        )
+
+        @OptionGroup(visibility: .hidden)
+        var globalOptions: GlobalOptions
+
+        @OptionGroup
+        var options: APIBreakingChangesOptions
+
+        func run(_ swiftCommandState: SwiftCommandState) async throws {
+            try await APIBreakingChangesRunner(options: self.options, globalOptions: self.globalOptions)
+                .run(swiftCommandState)
+        }
+    }
+}
+
+/// The deprecated spelling of `swift package api diagnose-breaking-changes`.
+///
+/// This is currently a silent alias: it is hidden from `--help` and the documentation, but does
+/// not warn, because it is widely used in existing CI configurations. A future release should
+/// start emitting a deprecation warning here, and a release after that should remove it (see
+/// `DeprecatedAPIDiff` for the eventual end state).
+struct APIDiff: AsyncSwiftCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "diagnose-api-breaking-changes",
+        abstract: "Diagnose API-breaking changes to Swift modules in a package.",
+        shouldDisplay: false,
+        helpNames: [.short, .long, .customLong("help", withSingleDash: true)]
+    )
+
+    @OptionGroup(visibility: .hidden)
+    var globalOptions: GlobalOptions
+
+    @OptionGroup
+    var options: APIBreakingChangesOptions
+
+    func run(_ swiftCommandState: SwiftCommandState) async throws {
+        // TODO: Emit a deprecation warning here in a future release, then remove this command.
+        try await APIBreakingChangesRunner(options: self.options, globalOptions: self.globalOptions)
+            .run(swiftCommandState)
+    }
+}
+
+/// The implementation of API breaking-changes diagnosis, shared by both command spellings.
+struct APIBreakingChangesRunner {
+    let options: APIBreakingChangesOptions
+    let globalOptions: GlobalOptions
+
+    private var breakageAllowlistPath: Basics.AbsolutePath? { self.options.breakageAllowlistPath }
+    private var treeish: String { self.options.treeish }
+    private var products: [String] { self.options.products }
+    private var targets: [String] { self.options.targets }
+    private var overrideBaselineDir: Basics.AbsolutePath? { self.options.overrideBaselineDir }
+    private var regenerateBaseline: Bool { self.options.regenerateBaseline }
 
     func run(_ swiftCommandState: SwiftCommandState) async throws {
         let packageRoot = try globalOptions.locations.packageDirectory ?? swiftCommandState.getPackageRoot()
@@ -89,10 +145,9 @@ struct APIDiff: AsyncSwiftCommand {
 
         let baselineDir = try overrideBaselineDir?.appending(component: baselineRevision.identifier) ?? swiftCommandState.productsBuildParameters.apiDiff.appending(component: "\(baselineRevision.identifier)-baselines")
         let packageGraph = try await swiftCommandState.loadPackageGraph()
-        let modulesToDiff = try Self.determineModulesToDiff(
-            packageGraph: packageGraph,
-            productNames: products,
-            targetNames: targets,
+        let modulesToDiff = try packageGraph.selectAPIModules(
+            products: products,
+            targets: targets,
             observabilityScope: swiftCommandState.observabilityScope,
             diagnoseMissingNames: true,
         )
@@ -292,10 +347,9 @@ struct APIDiff: AsyncSwiftCommand {
             observabilityScope: swiftCommandState.observabilityScope
         )
 
-        let baselineModules = try Self.determineModulesToDiff(
-            packageGraph: graph,
-            productNames: products,
-            targetNames: targets,
+        let baselineModules = try graph.selectAPIModules(
+            products: products,
+            targets: targets,
             observabilityScope: swiftCommandState.observabilityScope,
             diagnoseMissingNames: false
         )
@@ -323,60 +377,6 @@ struct APIDiff: AsyncSwiftCommand {
         )
         try await buildSystem.build()
         return baselineModules
-    }
-
-    private static func determineModulesToDiff(packageGraph: ModulesGraph, productNames: [String], targetNames: [String], observabilityScope: ObservabilityScope, diagnoseMissingNames: Bool) throws -> Set<String> {
-        var modulesToDiff: Set<String> = []
-        if productNames.isEmpty && targetNames.isEmpty {
-            modulesToDiff.formUnion(packageGraph.apiDigesterModules)
-        } else {
-            for productName in productNames {
-                guard let product = packageGraph
-                        .rootPackages
-                        .flatMap(\.products)
-                        .first(where: { $0.name == productName }) else {
-                    if diagnoseMissingNames {
-                        observabilityScope.emit(error: "no such product '\(productName)'")
-                    }
-                    continue
-                }
-                guard product.type.isLibrary else {
-                    if diagnoseMissingNames {
-                        observabilityScope.emit(error: "'\(productName)' is not a library product")
-                    }
-                    continue
-                }
-                modulesToDiff.formUnion(product.modules.filter { $0.underlying is SwiftModule }.map(\.c99name))
-            }
-            for targetName in targetNames {
-                guard let target = packageGraph
-                        .rootPackages
-                        .flatMap(\.modules)
-                        .first(where: { $0.name == targetName }) else {
-                    if diagnoseMissingNames {
-                        observabilityScope.emit(error: "no such target '\(targetName)'")
-                    }
-                    continue
-                }
-                guard target.type == .library else {
-                    if diagnoseMissingNames {
-                        observabilityScope.emit(error: "'\(targetName)' is not a library target")
-                    }
-                    continue
-                }
-                guard target.underlying is SwiftModule else {
-                    if diagnoseMissingNames {
-                        observabilityScope.emit(error: "'\(targetName)' is not a Swift language target")
-                    }
-                    continue
-                }
-                modulesToDiff.insert(target.c99name)
-            }
-            guard !observabilityScope.errorsReported else {
-                throw ExitCode.failure
-            }
-        }
-        return modulesToDiff
     }
 
     private func printComparisonResult(

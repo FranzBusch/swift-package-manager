@@ -33,9 +33,12 @@ Overview of package manager commands here...
 
 ### Using package manager plugins
 - <doc:PackagePlugin>
-- <doc:PackageDiagnoseAPIBreakingChange>
 <!-- ref to swift-format -->
 <!-- ref to swift-docc-plugin -->
+
+### Inspecting and comparing API
+- <doc:PackageAPIDiagnoseBreakingChanges>
+- <doc:PackageDiagnoseAPIBreakingChange>
 
 ### Inspecting packages
 - <doc:PackageDescribe>
@@ -67,6 +70,7 @@ Overview of package manager commands here...
 - <doc:PackageGenerateSBOM>
 
 ### Experimental commands
+- <doc:PackageAPIExperimentalExtract>
 - <doc:PackageExperimentalInstall>
 - <doc:PackageExperimentalUninstall>
 

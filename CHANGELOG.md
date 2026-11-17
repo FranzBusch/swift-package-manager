@@ -3,6 +3,23 @@ Note: This is in reverse chronological order, so newer entries are added to the 
 Swift Next
 -----------
 
+* [#10400]
+
+  Adds a new `swift package api` command group for inspecting and comparing the API of a package's
+  modules.
+
+  `swift package api experimental-extract` writes out the public API surface of a package's Swift
+  modules as `.swiftinterface` text, for reviewing an API, attaching it to a pull request, or
+  committing it to a repository so that changes appear as a reviewable diff. The extracted API is
+  written to standard output. The command currently requires the default build system.
+
+  `swift package diagnose-api-breaking-changes` has moved to
+  `swift package api diagnose-breaking-changes`. The previous spelling continues to work and does
+  not yet warn, because it is widely used in existing continuous integration configurations. A
+  future release will start emitting a deprecation warning, and a release after that will remove
+  it. Note that with the new spelling, global options such as `--package-path` must be passed
+  before the `api` subcommand.
+
 Swift 6.2
 ---------
 

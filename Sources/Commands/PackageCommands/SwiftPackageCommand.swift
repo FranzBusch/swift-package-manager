@@ -48,6 +48,7 @@ public struct SwiftPackageCommand: AsyncParsableCommand {
             Install.self,
             Uninstall.self,
 
+            API.self,
             APIDiff.self,
             DeprecatedAPIDiff.self,
             DumpSymbolGraph.self,

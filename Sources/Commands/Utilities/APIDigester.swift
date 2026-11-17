@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 import _Concurrency
+import ArgumentParser
 import Dispatch
 import Foundation
 
@@ -325,6 +326,74 @@ extension ModulesGraph {
             .flatMap(\.modules)
             .filter { $0.underlying is SwiftModule }
             .map { $0.c99name }
+    }
+
+    /// Determine the set of modules whose API should be operated on, given the products and
+    /// targets explicitly requested on the command line.
+    ///
+    /// When neither products nor targets are specified, every Swift module belonging to a library
+    /// product of a root package is selected.
+    ///
+    /// - Parameter diagnoseMissingNames: Whether to emit errors for requested names that don't
+    ///   resolve to a suitable module. This is suppressed when selecting modules in a baseline
+    ///   revision, where a product or target may legitimately not exist yet.
+    func selectAPIModules(
+        products productNames: [String],
+        targets targetNames: [String],
+        observabilityScope: ObservabilityScope,
+        diagnoseMissingNames: Bool
+    ) throws -> Set<String> {
+        var selectedModules: Set<String> = []
+        if productNames.isEmpty && targetNames.isEmpty {
+            selectedModules.formUnion(self.apiDigesterModules)
+        } else {
+            for productName in productNames {
+                guard let product = self
+                        .rootPackages
+                        .flatMap(\.products)
+                        .first(where: { $0.name == productName }) else {
+                    if diagnoseMissingNames {
+                        observabilityScope.emit(error: "no such product '\(productName)'")
+                    }
+                    continue
+                }
+                guard product.type.isLibrary else {
+                    if diagnoseMissingNames {
+                        observabilityScope.emit(error: "'\(productName)' is not a library product")
+                    }
+                    continue
+                }
+                selectedModules.formUnion(product.modules.filter { $0.underlying is SwiftModule }.map(\.c99name))
+            }
+            for targetName in targetNames {
+                guard let target = self
+                        .rootPackages
+                        .flatMap(\.modules)
+                        .first(where: { $0.name == targetName }) else {
+                    if diagnoseMissingNames {
+                        observabilityScope.emit(error: "no such target '\(targetName)'")
+                    }
+                    continue
+                }
+                guard target.type == .library else {
+                    if diagnoseMissingNames {
+                        observabilityScope.emit(error: "'\(targetName)' is not a library target")
+                    }
+                    continue
+                }
+                guard target.underlying is SwiftModule else {
+                    if diagnoseMissingNames {
+                        observabilityScope.emit(error: "'\(targetName)' is not a Swift language target")
+                    }
+                    continue
+                }
+                selectedModules.insert(target.c99name)
+            }
+            guard !observabilityScope.errorsReported else {
+                throw ExitCode.failure
+            }
+        }
+        return selectedModules
     }
 }
 

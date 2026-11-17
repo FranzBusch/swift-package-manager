@@ -602,4 +602,78 @@ struct APIDiffTests {
             #expect(error.stdout.contains("`swift package experimental-api-diff` has been renamed to `swift package diagnose-api-breaking-changes`"))
         }
     }
+
+    /// The current spelling of the command must behave identically to the deprecated one. Both
+    /// delegate to the same implementation, so this covers the option declarations that could
+    /// drift between them.
+    @Test(
+        .requiresAPIDigester,
+        .tags(
+            .Feature.Command.Package.APIDiagnoseBreakingChanges,
+        ),
+        arguments: SupportedBuildSystemOnAllPlatforms,
+    )
+    func testAPIGroupSpellingDetectsBreakage(buildSystem: BuildSystemProvider.Kind) async throws {
+        try await fixture(name: "Miscellaneous/APIDiff/", createGitRepo: true) { fixturePath in
+            let packageRoot = fixturePath.appending("Foo")
+            try localFileSystem.writeFileContents(
+                packageRoot.appending("Foo.swift"),
+                string: "public let foo = 42"
+            )
+            await expectThrowsCommandExecutionError(
+                try await execute(
+                    ["api", "diagnose-breaking-changes", "1.2.3"],
+                    packagePath: packageRoot,
+                    buildSystem: buildSystem
+                )
+            ) { error in
+                #expect(error.stdout.contains("1 breaking change detected in Foo"))
+                #expect(error.stdout.contains("💔 API breakage: func foo() has been removed"))
+            }
+        }
+    }
+
+    /// The deprecated spelling is currently a *silent* alias. When a future release starts warning,
+    /// this test is the tripwire that forces the change to be deliberate.
+    @Test(
+        .requiresAPIDigester,
+        .tags(
+            .Feature.Command.Package.DiagnoseApiBreakingChanges,
+        ),
+        arguments: SupportedBuildSystemOnAllPlatforms,
+    )
+    func testDeprecatedSpellingDoesNotWarnYet(buildSystem: BuildSystemProvider.Kind) async throws {
+        try await fixture(name: "Miscellaneous/APIDiff/", createGitRepo: true) { fixturePath in
+            let packageRoot = fixturePath.appending("Foo")
+            try localFileSystem.writeFileContents(
+                packageRoot.appending("Foo.swift"),
+                string: "public let foo = 42"
+            )
+            await expectThrowsCommandExecutionError(
+                try await execute(
+                    ["diagnose-api-breaking-changes", "1.2.3"],
+                    packagePath: packageRoot,
+                    buildSystem: buildSystem
+                )
+            ) { error in
+                // Still functional...
+                #expect(error.stdout.contains("1 breaking change detected in Foo"))
+                // ...and still silent about the move.
+                #expect(!error.stderr.contains("is deprecated"))
+            }
+        }
+    }
+
+    /// `swift package --help` must advertise only the current spelling.
+    @Test(
+        .tags(
+            .Feature.Command.Package.APIDiagnoseBreakingChanges,
+        ),
+        arguments: SupportedBuildSystemOnAllPlatforms,
+    )
+    func testDeprecatedSpellingIsHiddenFromHelp(buildSystem: BuildSystemProvider.Kind) async throws {
+        let (stdout, _) = try await execute(["--help"], packagePath: nil, buildSystem: buildSystem)
+        #expect(!stdout.contains("diagnose-api-breaking-changes"))
+        #expect(stdout.contains("api"))
+    }
 }

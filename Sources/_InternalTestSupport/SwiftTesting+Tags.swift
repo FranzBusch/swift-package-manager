@@ -195,6 +195,8 @@ extension Tag.Feature.Command.Package {
     @Tag public static var CompletionTool: Tag
     @Tag public static var Config: Tag
     @Tag public static var Describe: Tag
+    @Tag public static var APIDiagnoseBreakingChanges: Tag
+    @Tag public static var APIExtract: Tag
     @Tag public static var DiagnoseApiBreakingChanges: Tag
     @Tag public static var DumpPackage: Tag
     @Tag public static var DumpSymbolGraph: Tag
